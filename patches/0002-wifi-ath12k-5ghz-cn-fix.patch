@@ -1,0 +1,19 @@
+--- a/drivers/net/wireless/ath/ath12k/reg.c
++++ b/drivers/net/wireless/ath/ath12k/reg.c
+@@ -310,7 +310,15 @@
+ 		ath12k_mac_update_freq_range(ar, freq_low, freq_high);
+ 	}
+ 
+-	if (supported_bands & WMI_HOST_WLAN_5GHZ_CAP && !ar->supports_6ghz) {
++	/* A radio that supports 6 GHz still covers the 5 GHz band. The 6 GHz
++	 * branch below only widens the range with the 6 GHz rule span, and in
++	 * countries without 6 GHz rules (e.g. CN) that span collapses onto the
++	 * 2 GHz range. Always account for the 5 GHz span when the radio
++	 * supports 5 GHz, otherwise every 5 GHz channel is dropped from the
++	 * channel list sent to firmware and a 5 GHz-only scan fails with a
++	 * "received scan start failure event".
++	 */
++	if (supported_bands & WMI_HOST_WLAN_5GHZ_CAP) {
+ 		if (ab->hw_params->single_pdev_only) {
+ 			phy_id = ar->pdev->cap.band[WMI_HOST_WLAN_5GHZ_CAP].phy_id;
+ 			reg_cap = &ab->hal_reg_cap[phy_id];

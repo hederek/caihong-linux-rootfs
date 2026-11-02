@@ -1,0 +1,134 @@
+--- a/drivers/power/supply/qcom_battmgr_caihong_policy.inc
++++ b/drivers/power/supply/qcom_battmgr_caihong_policy.inc
+@@ -111,7 +111,19 @@
+ 	int ret;
+ 
+ 	mutex_lock(&battmgr->lock);
++	/*
++	 * Track the outstanding OnePlus SET under the same lock that serializes
++	 * glink requests.  This makes the bookkeeping safe for callers that do
++	 * not hold oneplus_lock, notably the OTG and USB-property paths which
++	 * must not wait behind the long-lived charging policy.
++	 */
++	battmgr->oneplus_ext_pending = true;
++	battmgr->oneplus_ext_opcode = opcode;
++	battmgr->oneplus_ext_property = property;
+ 	ret = qcom_battmgr_request_property(battmgr, opcode, property, value);
++	battmgr->oneplus_ext_pending = false;
++	battmgr->oneplus_ext_opcode = 0;
++	battmgr->oneplus_ext_property = 0;
+ 	mutex_unlock(&battmgr->lock);
+ 
+ 	return ret;
+@@ -243,22 +255,11 @@
+ 						     u32 opcode, u32 property,
+ 						     u32 value)
+ {
+-	int ret;
+-
+ 	if (!battmgr->service_up)
+ 		return -ENOTCONN;
+ 
+-	battmgr->oneplus_ext_pending = true;
+-	battmgr->oneplus_ext_opcode = opcode;
+-	battmgr->oneplus_ext_property = property;
+-
+-	ret = qcom_battmgr_oneplus_request_property(battmgr, opcode, property, value);
+-
+-	battmgr->oneplus_ext_pending = false;
+-	battmgr->oneplus_ext_opcode = 0;
+-	battmgr->oneplus_ext_property = 0;
+-
+-	return ret;
++	return qcom_battmgr_oneplus_request_property(battmgr, opcode, property,
++						     value);
+ }
+ 
+ /*
+@@ -1134,24 +1135,20 @@
+ 	int typec_rc;
+ 	int ap_rc;
+ 
+-	mutex_lock(&battmgr->oneplus_lock);
+-	if (!battmgr->oneplus_otg_control || !battmgr->service_up) {
+-		mutex_unlock(&battmgr->oneplus_lock);
++	if (!battmgr->oneplus_otg_control || !battmgr->service_up)
+ 		return;
+-	}
+ 
+ 	battmgr->oneplus_otg_init_attempts++;
+-	typec_rc = qcom_battmgr_oneplus_property_set_locked(
++	typec_rc = qcom_battmgr_oneplus_request_property(
+ 		battmgr, BATTMGR_USB_PROPERTY_SET,
+ 		BATTMGR_ONEPLUS_USB_TYPEC_MODE,
+ 		BATTMGR_ONEPLUS_TYPEC_ROLE_DRP);
+-	ap_rc = qcom_battmgr_oneplus_property_set_locked(
++	ap_rc = qcom_battmgr_oneplus_request_property(
+ 		battmgr, BATTMGR_USB_PROPERTY_SET,
+ 		BATTMGR_ONEPLUS_USB_OTG_AP_ENABLE, 1);
+ 	battmgr->oneplus_otg_typec_mode_rc = typec_rc;
+ 	battmgr->oneplus_otg_ap_enable_rc = ap_rc;
+ 	battmgr->oneplus_otg_initialized = !typec_rc && !ap_rc;
+-	mutex_unlock(&battmgr->oneplus_lock);
+ 
+ 	dev_info(battmgr->dev,
+ 		 "Caihong OTG firmware init: typec_drp=%d otg_ap_enable=%d\n",
+@@ -1168,17 +1165,22 @@
+ 
+ 	enable = READ_ONCE(battmgr->oneplus_otg_vbus_requested);
+ 
+-	mutex_lock(&battmgr->oneplus_lock);
+-	if (!battmgr->oneplus_otg_control || !battmgr->service_up) {
+-		mutex_unlock(&battmgr->oneplus_lock);
++	if (!battmgr->oneplus_otg_control || !battmgr->service_up)
+ 		return;
+-	}
+ 
+-	ret = qcom_battmgr_oneplus_property_set_locked(
++	/*
++	 * The OTG worker must not take oneplus_lock: the charging policy can
++	 * hold it for the whole dual-pump run (or forever if the SC8547 path
++	 * deadlocks), which leaves host mode without VBUS.
++	 */
++	ret = qcom_battmgr_oneplus_request_property(
+ 		battmgr, BATTMGR_USB_PROPERTY_SET,
+ 		BATTMGR_ONEPLUS_USB_OTG_VBUS_ENABLE, enable);
+ 	battmgr->oneplus_otg_vbus_rc = ret;
+-	mutex_unlock(&battmgr->oneplus_lock);
++
++	/* A state change that raced this request needs another pass. */
++	if (READ_ONCE(battmgr->oneplus_otg_vbus_requested) != enable)
++		mod_delayed_work(system_wq, &battmgr->oneplus_otg_event_work, 0);
+ 
+ 	dev_info(battmgr->dev, "Caihong OTG VBUS %s: %d\n",
+ 		 enable ? "enable" : "disable", ret);
+@@ -1323,7 +1325,6 @@
+ {
+ 	struct qcom_battmgr *battmgr = power_supply_get_drvdata(psy);
+ 	u32 request;
+-	int ret;
+ 
+ 	if (psp != POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT ||
+ 	    !battmgr->oneplus_pps_read_buffer)
+@@ -1334,13 +1335,16 @@
+ 	/* The vendor USB HAL uses a negative ICL to remove its suspend vote. */
+ 	request = val->intval < 0 ? U32_MAX : (u32)val->intval;
+ 
+-	mutex_lock(&battmgr->oneplus_lock);
+-	ret = qcom_battmgr_oneplus_property_set_locked(
++	/*
++	 * The SC8547 VOOC work holds its own mutex across this call while the
++	 * dual-pump policy calls into SC8547 holding oneplus_lock.  Taking
++	 * oneplus_lock here inverts that order and deadlocks both paths, which
++	 * in turn strands the OTG worker.  The glink request is serialized by
++	 * battmgr->lock inside qcom_battmgr_oneplus_request_property().
++	 */
++	return qcom_battmgr_oneplus_request_property(
+ 		battmgr, BATTMGR_USB_PROPERTY_SET, USB_INPUT_CURR_LIMIT,
+ 		request);
+-	mutex_unlock(&battmgr->oneplus_lock);
+-
+-	return ret;
+ }
+ 
+ static int qcom_battmgr_usb_property_is_writeable(

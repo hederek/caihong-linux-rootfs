@@ -55,7 +55,23 @@ jobs:
           restore-keys: archlinuxarm-${{ runner.os }}-
 
       - name: Resolve component branches
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: scripts/checkout-dependencies.sh
+
+      - name: Apply kernel patches
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          patches=(patches/*.patch)
+          if [ ${#patches[@]} -eq 0 ]; then
+            echo "no kernel patches"
+            exit 0
+          fi
+          for patch_file in "${patches[@]}"; do
+            echo "applying $patch_file"
+            patch --batch --forward -d linux -p1 < "$patch_file"
+          done
 
       - name: Restore compiler cache
         uses: actions/cache/restore@v4

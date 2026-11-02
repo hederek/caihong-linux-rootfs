@@ -54,10 +54,57 @@ checkout()
 	} >> "$resolved"
 }
 
+fetch_linux_tarball()
+{
+	target=$1
+	commit=$2
+	repo_path=${LINUX_REPOSITORY#https://github.com/}
+	repo_path=${repo_path%.git}
+	tarball=$(mktemp)
+	downloaded=0
+
+	# Local builds can point LINUX_TARBALL at an already downloaded archive.
+	if [ -n "${LINUX_TARBALL:-}" ] && [ -f "$LINUX_TARBALL" ]; then
+		cp -- "$LINUX_TARBALL" "$tarball"
+		downloaded=1
+	fi
+	# Use the authenticated API first on CI to stay clear of codeload's
+	# unauthenticated rate limit; fall back to the plain codeload archive.
+	if [ "$downloaded" -eq 0 ] && [ -n "${GITHUB_TOKEN:-}" ]; then
+		if curl -fsSL --retry 3 --retry-delay 5 \
+			-H "Authorization: Bearer $GITHUB_TOKEN" \
+			-o "$tarball" \
+			"https://api.github.com/repos/$repo_path/tarball/$commit"; then
+			downloaded=1
+		fi
+	fi
+	if [ "$downloaded" -eq 0 ]; then
+		if ! curl -fsSL --retry 5 --retry-delay 5 -o "$tarball" \
+			"https://codeload.github.com/$repo_path/tar.gz/$commit"; then
+			rm -f -- "$tarball"
+			echo "failed to download kernel $commit" >&2
+			exit 1
+		fi
+	fi
+	rm -rf -- "$target"
+	mkdir -p -- "$target"
+	tar xzf "$tarball" --strip-components=1 -C "$target"
+	rm -f -- "$tarball"
+	{
+		printf 'LINUX_REPOSITORY=%s\n' "$LINUX_REPOSITORY"
+		printf 'LINUX_REF=%s\n' "$commit"
+		printf 'LINUX_COMMIT=%s\n' "$commit"
+	} >> "$resolved"
+}
+
 mkdir -p "$project_dir/build"
 resolved="$project_dir/build/dependencies.resolved.env"
 : > "$resolved"
-checkout LINUX "$LINUX_REF" "$project_dir/linux" "$LINUX_REPOSITORY"
+if [ -n "${LINUX_COMMIT:-}" ]; then
+	fetch_linux_tarball "$project_dir/linux" "$LINUX_COMMIT"
+else
+	checkout LINUX "$LINUX_REF" "$project_dir/linux" "$LINUX_REPOSITORY"
+fi
 if [ "$dependency_scope" = release ]; then
 	checkout LIBCAMERA "$LIBCAMERA_REF" \
 		"$project_dir/external/libcamera" "$LIBCAMERA_REPOSITORY"
