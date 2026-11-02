@@ -1,0 +1,93 @@
+--- a/drivers/power/supply/sc8547.c
++++ b/drivers/power/supply/sc8547.c
+@@ -145,8 +145,13 @@
+ #define SC8547_VOOC_AUTO_RETRY_DELAY_MS	2000
+ #define SC8547_VOOC_RECOVERY_RETRY_DELAY_MS	30000
+ #define SC8547_VOOC_RECOVERY_RETRY_MAX	3
+-#define SC8547_VOOC_PRE_MODEL_RETRY_MAX	5
++#define SC8547_VOOC_PRE_MODEL_RETRY_MAX	8
+ #define SC8547_VOOC_PRE_MODEL_RETRY_DELAY_MS	5000
++/* The vendor stack keeps the handshake alive for as long as a VOOC-capable
++ * cable stays connected.  Each round is the bounded retry/recovery sequence
++ * above; rounds only continue after a real adapter exchange was observed. */
++#define SC8547_VOOC_RETRY_ROUND_MAX		20
++#define SC8547_VOOC_RETRY_ROUND_DELAY_MS	60000
+ #define SC8547_VOOC_USB_SUSPEND_MS	1500
+ #define SC8547_VOOC_USB_SETTLE_MS	700
+ #define SC8547_VOOC_REACTIVE_SETTLE_MS	350
+@@ -451,6 +456,7 @@
+ 	u8 device_id;
+ 	int vooc_last_vbus_uv;
+ 	int vooc_last_ibus_ua;
++	u8 vooc_last_rx_count;
+ 	bool vooc_last_cp_started;
+ 	/* Per-session protocol context.  These fields are reset for every session. */
+ 	u8 vooc_tx_head;
+@@ -467,6 +473,7 @@
+ 	bool vooc_model_done;
+ 	bool vooc_batt_model_done;
+ 	unsigned int vooc_auto_retry_count;
++	u8 vooc_retry_round;
+ 	int vooc_last_total_ibus_ua;
+ 	atomic_t vooc_retry_running;
+ 	struct workqueue_struct *vooc_wq;
+@@ -2608,6 +2615,7 @@
+ 
+ 	sc->vooc_last_vbus_uv = -ENODATA;
+ 	sc->vooc_last_ibus_ua = -ENODATA;
++	sc->vooc_last_rx_count = 0;
+ 	sc->vooc_tx_head = SC8547_VOOC_INVERT_SVOOC;
+ 	/* The vendor starts with the SVOOC head and only changes after
+ 	 * repeated VOOC2-head frames during adapter detection. */
+@@ -3387,6 +3395,7 @@
+ 	}
+ 
+ out_cleanup:
++	sc->vooc_last_rx_count = rx_count;
+ 	secondary_disable_ret = sc8547_vooc_secondary_disable(&secondary_state);
+ 	if (secondary_disable_ret) {
+ 		if (!ret)
+@@ -3777,6 +3786,26 @@
+ 			 ret, sc->vooc_recovery_retry_count,
+ 			 SC8547_VOOC_RECOVERY_RETRY_MAX, retry_delay_ms);
+ 		sc8547_queue_vooc_retry(sc, msecs_to_jiffies(retry_delay_ms));
++	} else if (!sc->vooc_policy_full &&
++		   sc->vooc_last_rx_count > 0 &&
++		   sc->vooc_retry_round + 1 < SC8547_VOOC_RETRY_ROUND_MAX &&
++		   sc->vooc_last_vbus_uv >= SC8547_VOOC_CABLE_PRESENT_UV &&
++		   sc->vooc_last_vbus_uv <= SC8547_VOOC_MAX_VBUS_UV) {
++		/* The adapter answered at least one SVOOC frame but the CP gate
++		 * was never reached.  Giving up after a fixed number of attempts
++		 * leaves the port at 5 V for the rest of the charge, while the
++		 * vendor stack simply keeps re-arming until the cable goes away.
++		 * Start a fresh bounded round instead of waiting for a replug. */
++		sc->vooc_retry_round++;
++		sc->vooc_auto_retry_count = 0;
++		sc->vooc_recovery_retry_count = 0;
++		dev_warn(sc->dev,
++			 "VOOC session failed rc=%d; starting retry round %u/%u in %u ms\n",
++			 ret, sc->vooc_retry_round,
++			 SC8547_VOOC_RETRY_ROUND_MAX - 1,
++			 SC8547_VOOC_RETRY_ROUND_DELAY_MS);
++		sc8547_queue_vooc_retry(sc,
++			msecs_to_jiffies(SC8547_VOOC_RETRY_ROUND_DELAY_MS));
+ 	} else {
+ 		dev_warn(sc->dev,
+ 			 "VOOC automatic session stopped after rc=%d\n", ret);
+@@ -3834,6 +3863,8 @@
+ 		WRITE_ONCE(sc->vooc_cable_online, false);
+ 		sc->vooc_cable_absent_count = 0;
+ 		sc->vooc_recovery_retry_count = 0;
++		sc->vooc_retry_round = 0;
++		sc->vooc_last_rx_count = 0;
+ 		sc8547_vooc_reset_curve(sc);
+ 		WRITE_ONCE(sc->vooc_auto_retry, false);
+ 		atomic_set(&sc->policy_cancel, 1);
+@@ -3855,6 +3886,7 @@
+ 	WRITE_ONCE(sc->vooc_auto_retry, true);
+ 	sc->vooc_auto_retry_count = 0;
+ 	sc->vooc_recovery_retry_count = 0;
++	sc->vooc_retry_round = 0;
+ 	retry_delay = initial_check ?
+ 		msecs_to_jiffies(SC8547_VOOC_BOOT_SETTLE_MS) : 0;
+ 	dev_info(sc->dev,
