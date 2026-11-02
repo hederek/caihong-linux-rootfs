@@ -1,6 +1,9 @@
 name: Build Caihong device update packages
 
 on:
+  push:
+    branches:
+      - fix/otg-vbus-lock
   workflow_dispatch:
     inputs:
       include_npu:
@@ -10,7 +13,7 @@ on:
         default: true
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: caihong-device-update-${{ github.ref }}
@@ -123,3 +126,23 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+
+      - name: Publish CI kernel package
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          tag="ci-otg-${GITHUB_RUN_ID}"
+          assets=(
+            release/linux-caihong-*-aarch64.pkg.tar.zst
+            release/caihong-boot-linux-*.img
+            release/SHA256SUMS.device-update
+          )
+          gh release create "$tag" \
+            --title "Caihong USB/OTG CI ${GITHUB_RUN_ID}" \
+            --notes "Automated kernel-package build from ${GITHUB_SHA}." \
+            --prerelease \
+            "${assets[@]}"
+          printf 'release=%s\n' "$tag"
