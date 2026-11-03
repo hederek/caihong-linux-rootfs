@@ -1,0 +1,5 @@
+# The file indexer is disabled by default on Caihong: the tablet has 8 GiB of
+# RAM and a single UFS device, and a full-text index costs several GB plus
+# sustained I/O. Enable it per user if Dolphin/KRunner content search is needed.
+[Basic Settings]
+Indexing-Enabled=false

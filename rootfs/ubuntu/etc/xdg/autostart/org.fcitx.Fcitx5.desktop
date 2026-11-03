@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Fcitx 5
+GenericName=Input Method
+Comment=Start the Fcitx 5 input method daemon
+Exec=fcitx5 --replace -d
+Icon=fcitx
+Terminal=false
+Categories=Utility;
+X-GNOME-Autostart-Phase=Applications
+X-GNOME-Autostart-enabled=true
+X-KDE-autostart-after=panel

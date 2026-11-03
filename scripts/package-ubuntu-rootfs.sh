@@ -451,6 +451,8 @@ echo "enabling services"
 systemctl --root="$rootfs" disable systemd-networkd.service \
 	systemd-networkd-wait-online.service 2>/dev/null || true
 systemctl --root="$rootfs" mask apparmor.service 2>/dev/null || true
+# NetworkManager owns the network; netplan only generates networkd config.
+systemctl --root="$rootfs" mask netplan-configure.service 2>/dev/null || true
 systemctl --root="$rootfs" mask systemd-networkd.service \
 	systemd-networkd-wait-online.service 2>/dev/null || true
 systemctl --root="$rootfs" enable NetworkManager.service bluetooth.service \
@@ -503,7 +505,7 @@ if [[ -e $rootfs/usr/lib/firmware/ath12k ]]; then
 fi
 
 rm -f -- "$rootfs/etc/resolv.conf"
-printf 'nameserver 1.1.1.1\n' > "$rootfs/etc/resolv.conf"
+printf '# NetworkManager writes the resolver configuration at runtime.\n' > "$rootfs/etc/resolv.conf"
 unmount_rootfs
 
 echo "creating $output"
