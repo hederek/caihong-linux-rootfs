@@ -29,6 +29,10 @@ kernel_root=${KERNEL_ROOT:-/}
 ssc_bundle=${SSC_BUNDLE:-"$project_dir/firmware-assets/caihong-ssc"}
 npu_bundle=${NPU_BUNDLE:-"$project_dir/firmware-assets/caihong-npu"}
 firmware_dir=${FIRMWARE_DIR:-"$project_dir/firmware"}
+# Optional host firmware directories merged on top of the Caihong bundle, e.g.
+# "realtek rtl_nic rtl_bt rtw88" for USB Ethernet/Wi-Fi/Bluetooth dongles.
+extra_firmware=${EXTRA_FIRMWARE:-}
+host_firmware_dir=${HOST_FIRMWARE_DIR:-/usr/lib/firmware}
 platform_package=${CAIHONG_PLATFORM_PACKAGE:-}
 output_format=${OUTPUT_FORMAT:-ext4}
 image_size_gib=${IMAGE_SIZE_GIB:-}
@@ -414,6 +418,17 @@ rm -rf -- "$rootfs/usr/lib/firmware"
 mkdir -p "$rootfs/usr/lib/firmware"
 rsync -aHAX --numeric-ids --chown=0:0 --exclude=SOURCE.md --exclude=SHA256SUMS \
 	"$firmware_dir/." "$rootfs/usr/lib/firmware/"
+if [[ -n $extra_firmware ]]; then
+	read -r -a extra_firmware_dirs <<< "$extra_firmware"
+	for firmware_directory in "${extra_firmware_dirs[@]}"; do
+		[[ -d $host_firmware_dir/$firmware_directory ]] || {
+			echo "warning: EXTRA_FIRMWARE entry not found: $firmware_directory" >&2
+			continue
+		}
+		rsync -aHAX --numeric-ids --chown=0:0 \
+			"$host_firmware_dir/$firmware_directory" "$rootfs/usr/lib/firmware/"
+	done
+fi
 "$project_dir/scripts/build-caihong-audioreach-topology.sh" \
 	"$rootfs/usr/lib/firmware/qcom/sm8650/SM8650-MTP-tplg.bin"
 
