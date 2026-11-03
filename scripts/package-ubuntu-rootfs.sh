@@ -102,8 +102,12 @@ packages=(
 	polkit-kde-agent-1 systemsettings dolphin konsole kate kdeconnect ark
 	kde-spectacle breeze kde-config-gtk-style kio-extras xdg-desktop-portal-kde
 	qt6-virtualkeyboard-plugin sddm sddm-theme-breeze epiphany-browser
-	xserver-xorg xwayland iio-sensor-proxy
+	xserver-xorg xwayland iio-sensor-proxy kamoso gstreamer1.0-tools
+	gstreamer1.0-plugins-good gstreamer1.0-plugins-base
 	systemd-zram-generator
+	meson ninja-build pkg-config libyaml-dev python3-jinja2 python3-ply
+	python3-yaml libevent-dev libgnutls28-dev libdrm-dev libudev-dev
+	libjpeg-dev libtiff-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
 )
 if [[ -n $extra_packages ]]; then
 	read -r -a extra_packages_array <<< "$extra_packages"
@@ -372,6 +376,37 @@ for private_release in "$kernel_linux_caihong"/modules/*; do
 	fi
 done
 in_chroot depmod -a "$kernel_release"
+
+# Optional: build the Caihong libcamera stack (QCOM ICP/BPS simple pipeline)
+# when a source checkout is supplied. Ubuntu's stock libcamera has no
+# Caihong tuning, so the camera stays unusable without it.
+libcamera_source=${LIBCAMERA_SOURCE:-}
+if [[ -n $libcamera_source ]]; then
+	[[ -f $libcamera_source/meson.build ]] || fail "LIBCAMERA_SOURCE is not a libcamera tree"
+	rm -rf -- "$rootfs/var/tmp/libcamera-src" "$rootfs/var/tmp/libcamera-build"
+	mkdir -p "$rootfs/var/tmp/libcamera-src"
+	rsync -a --delete --exclude='/.git/' --exclude='/build*/' \
+		--exclude='**/__pycache__/' "$libcamera_source/" "$rootfs/var/tmp/libcamera-src/"
+	printf '0.7.2+caihong\n' > "$rootfs/var/tmp/libcamera-src/.tarball-version"
+	in_chroot meson setup /var/tmp/libcamera-build /var/tmp/libcamera-src \
+		--buildtype=release --prefix=/usr --sysconfdir=/etc --libdir=lib \
+		-Dwerror=false -Dandroid=disabled -Dcam=enabled -Ddocumentation=disabled \
+		-Dgstreamer=enabled -Dipas= -Dlc-compliance=disabled -Dpipelines=simple \
+		-Dpycamera=disabled -Dqcam=disabled -Dsoftisp-gpu=disabled -Dtest=false \
+		-Dtracing=disabled -Dv4l2=disabled
+	in_chroot ninja -C /var/tmp/libcamera-build -j 6
+	in_chroot ninja -C /var/tmp/libcamera-build install
+	in_chroot ldconfig
+	libcamera_commit=$(git -C "$libcamera_source" rev-parse --short HEAD 2>/dev/null || echo unknown)
+	install -d -m 0755 "$rootfs/usr/share/caihong"
+	printf '%s\n' build=caihong version=0.7.2+caihong \
+		"source_commit=$libcamera_commit" build_profile=ubuntu-rootfs-native \
+		pipelines=simple ipas=none isp_backend=qcom-camera-icp-bps \
+		qcam=disabled v4l2_compat=disabled \
+		> "$rootfs/usr/share/caihong/libcamera-build-info"
+	chmod 0644 "$rootfs/usr/share/caihong/libcamera-build-info"
+	rm -rf -- "$rootfs/var/tmp/libcamera-src" "$rootfs/var/tmp/libcamera-build"
+fi
 
 echo "installing Caihong-only runtime firmware"
 (cd "$firmware_dir" && sha256sum -c SHA256SUMS >/dev/null)

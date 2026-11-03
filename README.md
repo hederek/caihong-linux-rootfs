@@ -94,9 +94,11 @@ distribution kernel, initramfs or `linux-firmware`: the kernel, DTB and boot
 images keep coming from the Android boot partition built by
 `scripts/build-boot-v2.sh`.
 
-Known gaps at this stage: the camera stack uses Ubuntu's stock libcamera
-without the Caihong IPA, the NPU/SSC runtimes are the prebuilt Arch binaries,
-and `netplan-configure.service` reports one harmless failure because
+Pass `LIBCAMERA_SOURCE=/path/to/libcamera-caihong` to build and install the
+Caihong libcamera stack (QCOM ICP/BPS simple pipeline) instead of Ubuntu's
+stock libcamera; without it the camera stays unusable. Remaining gaps: the
+NPU/SSC runtimes are the prebuilt Arch binaries, and
+`netplan-configure.service` reports one harmless failure because
 NetworkManager owns the network.
 
 ## Installation
