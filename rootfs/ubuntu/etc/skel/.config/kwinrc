@@ -1,0 +1,15 @@
+[Desktops]
+Id_1=2814d96b-f3c9-4872-a837-482afb8a49e7
+Number=1
+Rows=1
+
+[Tiling][2814d96b-f3c9-4872-a837-482afb8a49e7][56366e6f-dc3a-4378-92b2-3ed0ee56a759]
+padding=4
+tiles={"layoutDirection":"horizontal","tiles":[{"width":0.25},{"width":0.5},{"width":0.25}]}
+
+[Wayland]
+InputMethod[$e]=/usr/share/applications/org.kde.plasma.keyboard.desktop
+VirtualKeyboardMode=1
+
+[Xwayland]
+Scale=2

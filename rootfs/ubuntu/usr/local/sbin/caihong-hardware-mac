@@ -1,0 +1,176 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (c) 2026 Osilvfe <osilvfe@gmail.com>
+set -euo pipefail
+
+readonly reader=/usr/local/libexec/caihong-nvram-mac
+
+wait_for_path()
+{
+	local path=$1
+	local attempts=150
+
+	while [[ ! -e $path && $attempts -gt 0 ]]; do
+		sleep 0.1
+		((attempts--))
+	done
+	[[ -e $path ]]
+}
+
+bluetooth_address()
+{
+	btmgmt --index hci0 info 2>/dev/null |
+		awk '/^[[:space:]]*addr / { print tolower($2); exit }'
+}
+
+wait_for_bluetooth_address()
+{
+	local expected=${1:-}
+	local attempts=300
+	local address
+
+	while (( attempts > 0 )); do
+		address=$(bluetooth_address || true)
+		if [[ $address =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] &&
+			{ [[ -z $expected ]] || [[ ${address,,} == "${expected,,}" ]]; }; then
+			printf '%s\n' "$address"
+			return 0
+		fi
+		sleep 0.1
+		((attempts--))
+	done
+	return 1
+}
+
+wait_for_bluetooth_state()
+{
+	local attempts=300
+	local address
+
+	while (( attempts > 0 )); do
+		address=$(bluetooth_address || true)
+		if [[ $address =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]]; then
+			printf '%s\n' "$address"
+			return 0
+		fi
+		if btmgmt config 2>/dev/null |
+			grep -q '^hci0:[[:space:]]*Unconfigured controller'; then
+			printf '%s\n' unconfigured
+			return 0
+		fi
+		sleep 0.1
+		((attempts--))
+	done
+	return 1
+}
+
+find_wifi_interface()
+{
+	local attempts=300
+	local interface phy
+
+	while (( attempts > 0 )); do
+		for phy in /sys/class/net/*/phy80211; do
+			[[ -e $phy ]] || continue
+			interface=${phy%/phy80211}
+			printf '%s\n' "${interface##*/}"
+			return 0
+		done
+		sleep 0.1
+		((attempts--))
+	done
+	return 1
+}
+
+normalize_network_profiles()
+{
+	local wifi_interface=$1
+	local wifi_address profile temporary
+
+	wifi_address=$(cat "/sys/class/net/$wifi_interface/address")
+	[[ $wifi_address =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] || return 0
+	wifi_address=${wifi_address,,}
+
+	for profile in /etc/NetworkManager/system-connections/*.nmconnection; do
+		[[ -f $profile ]] || continue
+		temporary=$(mktemp --tmpdir=/etc/NetworkManager/system-connections \
+			'.caihong-network-profile.XXXXXX')
+		awk -v expected="$wifi_address" '
+			BEGIN { in_wifi = 0 }
+			$0 == "[wifi]" { in_wifi = 1; print; next }
+			in_wifi && /^\[/ { in_wifi = 0 }
+			in_wifi && /^mac-address=/ {
+				value = $0
+				sub(/^[^=]*=/, "", value)
+				if (tolower(value) != expected)
+					next
+			}
+			{ print }
+		' "$profile" > "$temporary"
+		if cmp -s "$profile" "$temporary"; then
+			rm -f "$temporary"
+			continue
+		fi
+		chown --reference="$profile" "$temporary"
+		chmod --reference="$profile" "$temporary"
+		mv -f "$temporary" "$profile"
+	done
+}
+
+wait_for_path /dev/disk/by-partlabel/nonmodemst1
+wait_for_path /dev/disk/by-partlabel/nonmodemst2
+
+mac_values=$($reader)
+while IFS='=' read -r name value; do
+	case $name in
+	WLAN_MAC) wlan_mac=$value ;;
+	BLUETOOTH_MAC) bluetooth_mac=$value ;;
+	esac
+done <<< "$mac_values"
+
+[[ ${wlan_mac:-} =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]]
+[[ ${bluetooth_mac:-} =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]]
+[[ $wlan_mac != "$bluetooth_mac" ]]
+
+if ! wifi_interface=$(find_wifi_interface); then
+	echo "no WLAN interface found" >&2
+	exit 1
+fi
+
+current_wlan=$(cat "/sys/class/net/$wifi_interface/address")
+if [[ ${current_wlan,,} != "${wlan_mac,,}" ]]; then
+	was_up=0
+	if ip link show dev "$wifi_interface" | grep -q '<[^>]*UP[,>]'; then
+		was_up=1
+		ip link set dev "$wifi_interface" down
+	fi
+	ip link set dev "$wifi_interface" address "$wlan_mac"
+	if (( was_up )); then
+		ip link set dev "$wifi_interface" up
+	fi
+fi
+
+normalize_network_profiles "$wifi_interface"
+
+if ! current_bluetooth=$(wait_for_bluetooth_state); then
+	echo "Bluetooth controller did not become ready" >&2
+	exit 1
+fi
+if [[ $current_bluetooth == unconfigured ]]; then
+	btmgmt --index hci0 public-addr "$bluetooth_mac"
+	current_bluetooth=$(wait_for_bluetooth_address "$bluetooth_mac")
+elif [[ ${current_bluetooth,,} != "${bluetooth_mac,,}" ]]; then
+	was_powered=0
+	if btmgmt --index hci0 info | grep -q 'current settings:.* powered'; then
+		was_powered=1
+	fi
+	btmgmt --index hci0 power off
+	btmgmt --index hci0 public-addr "$bluetooth_mac"
+	current_bluetooth=$(wait_for_bluetooth_address "$bluetooth_mac")
+	if (( was_powered )); then
+		btmgmt --index hci0 power on
+	fi
+fi
+
+echo "WLAN $wifi_interface: $wlan_mac"
+echo "Bluetooth hci0: $bluetooth_mac"

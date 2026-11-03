@@ -71,6 +71,34 @@ default Armada account and password are both `armada` and should be changed
 after the first boot. The installation steps below also apply to Armada; use
 the matching `caihong-armada-rootfs-*` file in place of `caihong-rootfs-*`.
 
+## Ubuntu (Plasma) rootfs
+
+`scripts/package-ubuntu-rootfs.sh` assembles an Ubuntu 26.04 LTS arm64 rootfs
+with KDE Plasma 6 and the same Caihong board integration as the Arch image.
+It bootstraps `ubuntu-base-26.04.1-base-arm64.tar.gz`, installs Plasma/SDDM,
+fcitx5, PipeWire, NetworkManager, BlueZ and the board packages, then overlays
+`rootfs/ubuntu/`, the Caihong firmware bundle, the running `linux-caihong`
+module tree and Android boot images.
+
+```sh
+sudo env UBUNTU_PASSWORD_HASH="$(sudo getent shadow alarm | cut -d: -f2)" \
+  scripts/package-ubuntu-rootfs.sh caihong-ubuntu-plasma.ext4.sparse.img
+```
+
+The result is a direct-root ext4 sparse image for the existing `linux` or
+`userdata` partition layout; it is flashed exactly like the Arch rootfs and
+leaves Android untouched when the `linux` partition is used. SDDM logs the
+console user into the Plasma Wayland session, and the panel scale comes from
+a seeded `kwinoutputconfig.json`. The image intentionally installs no
+distribution kernel, initramfs or `linux-firmware`: the kernel, DTB and boot
+images keep coming from the Android boot partition built by
+`scripts/build-boot-v2.sh`.
+
+Known gaps at this stage: the camera stack uses Ubuntu's stock libcamera
+without the Caihong IPA, the NPU/SSC runtimes are the prebuilt Arch binaries,
+and `netplan-configure.service` reports one harmless failure because
+NetworkManager owns the network.
+
 ## Installation
 
 Follow these steps exactly. Repartitioning or flashing the wrong target can
