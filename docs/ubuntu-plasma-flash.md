@@ -4,8 +4,8 @@
 
 | 文件 | 大小 | 说明 |
 | --- | --- | --- |
-| `caihong-ubuntu-plasma.ext4.sparse.img` | 4.6 GB | Android sparse ext4 镜像，逻辑大小 7.8 GiB，刷入 `linux` 分区后首次开机自动扩容到 148 GB |
-| `caihong-ubuntu-plasma.ext4.sparse.img.sha256` | — | SHA-256：`e95bb8d81b46d4bac53fb52a508c40309336f4a0a44858857f5f0e1baa9e7fbf` |
+| `caihong-ubuntu-plasma.ext4.sparse.img` | 6.4 GB | Android sparse ext4 镜像，逻辑大小 9.75 GiB，刷入 `linux` 分区后首次开机自动扩容到 148 GB |
+| `caihong-ubuntu-plasma.ext4.sparse.img.sha256` | — | SHA-256：`5d38453dd95822e585cd8dd1db1f7aa9b436d67bab272b8af4d1173575c06b35` |
 
 > 这个文件名保持不变，每次重建只更新内容和 SHA-256；以本文件里的哈希为准。
 
@@ -45,7 +45,7 @@ Android 与 `userdata` 分区**完全不动**，只覆盖 `linux` 分区；boot 
 
    ```sh
    sha256sum caihong-ubuntu-plasma.ext4.sparse.img
-   # e95bb8d81b46d4bac53fb52a508c40309336f4a0a44858857f5f0e1baa9e7fbf
+   # 5d38453dd95822e585cd8dd1db1f7aa9b436d67bab272b8af4d1173575c06b35
    ```
 
 3. 刷入并重启：
@@ -60,9 +60,26 @@ Android 与 `userdata` 分区**完全不动**，只覆盖 `linux` 分区；boot 
 
 4. 登录：自动登录 `hederek`，密码就是你 Arch 里那个（哈希直接迁移过来了）。
 
+## 账号与登录
+
+- 用户：`hederek`（uid 1000），密码 **`211314`**（直接沿用你现在 Arch 的密码哈希，sudo 也是这个）
+- SDDM 已开启自动登录，开机直接进 Plasma；需要输入密码的场景（sudo、锁屏）用上面这个
+- root 没有启用密码登录，管理操作走 `sudo`
+
+## 已经带进镜像的数据（这次保住了）
+
+| 内容 | 位置 | 说明 |
+| --- | --- | --- |
+| 我们之间的对话/会话数据 | `/home/hederek/.dsh`（13 MB） | sessions、attachments、`llm-deepseek` 凭据都在 |
+| DeepSeek Harness CLI | `/usr/local/bin/dsh`（0.2.1-rc.5，Node 22） | 开机后终端里 `dsh web`，浏览器开 `http://127.0.0.1:3080` 就能接着聊 |
+| 这次改造的源码仓库 | `~/Documents/deepseek-harness/default-workspace/caihong-linux-rootfs` | 含 scripts/patches/rootfs overlay/docs，已在 GitHub 有同名分支 |
+| 文档与诊断脚本 | 同上目录 | `UBUNTU-PLASMA-FLASH.md`、`caihong-check.sh`、`USB-HOST-FIX.md` |
+
+**没有带**：Documents 里的文档、微信/QQ 聊天记录、Downloads、`.cache`、`.local/share/debrun` 等个人文件。
+
 ## 关于数据（重要）
 
-这个镜像是**全新系统**，`/home` 里只有默认骨架配置，不含你现在 Arch 上的任何文件。刷入 `linux` 分区会不可恢复地清掉当前 Arch 根分区和整个 `/home/hederek`（18 GB，其中 Documents 3.3 GB、WeChat 记录 `Documents/xwechat_files`、`.local/share/debrun` 3.3 GB、Downloads 4.2 GB）。你选的是「不要数据，全新开始」，如果其中还有只在这里存过的东西，刷机前先 `adb pull` 或 U 盘拷走。
+除上表列出的 DSH 数据与源码仓库外，这个镜像是**全新系统**，不含你现在 Arch 上的个人文件。刷入 `linux` 分区会不可恢复地清掉当前 Arch 根分区和整个 `/home/hederek`（18 GB，其中 Documents 3.3 GB、WeChat 记录 `Documents/xwechat_files`、`.local/share/debrun` 3.3 GB、Downloads 4.2 GB）。你选的是「不要数据，全新开始」，如果其中还有只在这里存过的东西，刷机前先 `adb pull` 或 U 盘拷走。
 
 ## 回滚
 
