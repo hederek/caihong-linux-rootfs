@@ -1,0 +1,6 @@
+[Behavior]
+ActiveByDefault=True
+ShareInputState=No
+
+[Hotkey]
+TriggerKeys=Control+space,Super+space
