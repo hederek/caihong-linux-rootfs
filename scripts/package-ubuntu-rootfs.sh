@@ -107,8 +107,13 @@ packages=(
 	kde-spectacle breeze kde-config-gtk-style kio-extras xdg-desktop-portal-kde
 	qt6-virtualkeyboard-plugin sddm sddm-theme-breeze epiphany-browser
 	xserver-xorg xwayland iio-sensor-proxy kamoso gstreamer1.0-tools
-	gstreamer1.0-plugins-good gstreamer1.0-plugins-base
+	gstreamer1.0-plugins-good gstreamer1.0-plugins-base gstreamer1.0-libav
 	systemd-zram-generator
+	libreoffice-writer libreoffice-calc libreoffice-impress libreoffice-kf6
+	libreoffice-l10n-zh-cn okular gwenview krita khelpcenter kwalletmanager
+	vlc vlc-plugin-base mpv ffmpeg bluedevil system-config-printer cups kcalc
+	plasma-discover plasma-discover-backend-flatpak flatpak
+	partitionmanager gparted 7zip unrar kio-admin dolphin-plugins
 	meson ninja-build pkg-config libyaml-dev python3-jinja2 python3-ply
 	python3-yaml libevent-dev libgnutls28-dev libdrm-dev libudev-dev
 	libjpeg-dev libtiff-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev
@@ -291,6 +296,28 @@ for package in "${unwanted_packages[@]}"; do
 		in_chroot apt-get purge -y "$package" || true
 	fi
 done
+# Firefox is only shipped as a snap in Ubuntu. Install the native package from
+# Mozilla's apt repository instead so the image keeps working without snapd.
+if [[ ${INSTALL_MOZILLA_DEB:-1} == 1 ]]; then
+	install -d -m 0755 "$rootfs/etc/apt/keyrings"
+	if curl -fsSL --retry 3 https://packages.mozilla.org/apt/repo-signing-key.gpg \
+		-o "$rootfs/etc/apt/keyrings/packages.mozilla.org.asc"; then
+		printf '%s\n' \
+			"deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main" \
+			> "$rootfs/etc/apt/sources.list.d/mozilla.list"
+		printf '%s\n' "Package: *" "Pin: origin packages.mozilla.org" "Pin-Priority: 1000" \
+			> "$rootfs/etc/apt/preferences.d/mozilla"
+		if in_chroot apt-get update -qq &&
+			in_chroot apt-get install -y --no-install-recommends firefox firefox-l10n-zh-cn; then
+			echo "installed Firefox from packages.mozilla.org"
+		else
+			echo "warning: could not install Firefox; Epiphany stays the browser" >&2
+		fi
+	else
+		echo "warning: could not fetch the Mozilla signing key" >&2
+	fi
+fi
+
 in_chroot apt-get clean
 rm -rf -- "$rootfs/var/lib/apt/lists"/*
 # ca-certificates is installed now, so the shipped image can use https.
